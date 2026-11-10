@@ -203,7 +203,8 @@ def dest(p: tuple[float, float], brg: float, dist_m: float) -> tuple[float, floa
     d = dist_m / _R
     la2 = math.asin(math.sin(la1) * math.cos(d) + math.cos(la1) * math.sin(d) * math.cos(b))
     lo2 = lo1 + math.atan2(math.sin(b) * math.sin(d) * math.cos(la1), math.cos(d) - math.sin(la1) * math.sin(la2))
-    return math.degrees(la2), math.degrees(lo2)
+    lon_deg = (math.degrees(lo2) + 540) % 360 - 180
+    return math.degrees(la2), lon_deg
 
 
 # ---------------------------------------------------------------- Web Mercator tiles
@@ -704,8 +705,19 @@ def _spacing_run(args) -> dict:
 # ---------------------------------------------------------------- CLI
 
 def _pair(s: str) -> tuple[float, float]:
-    a, b = s.split(",")
-    return float(a), float(b)
+    parts = s.split(",")
+    if len(parts) != 2:
+        raise argparse.ArgumentTypeError(f"Invalid coordinate pair '{s}', expected 'lat,lon'")
+    try:
+        lat = float(parts[0].strip())
+        lon = float(parts[1].strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid numeric coordinates in '{s}'")
+    if not (-90.0 <= lat <= 90.0):
+        raise argparse.ArgumentTypeError(f"Latitude {lat} out of valid range [-90, 90]")
+    if not (-180.0 <= lon <= 180.0):
+        raise argparse.ArgumentTypeError(f"Longitude {lon} out of valid range [-180, 180]")
+    return lat, lon
 
 
 
