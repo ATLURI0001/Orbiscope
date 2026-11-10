@@ -75,7 +75,8 @@ class NetworkTests(unittest.TestCase):
         with patch.dict(os.environ, {"GEO_PROXY": "http://chosen:8080", "https_proxy": "http://old:8080", "NO_PROXY": "*"}, clear=True):
             _net.model_proxy_env()
             self.assertEqual(os.environ["HTTPS_PROXY"], "http://chosen:8080")
-            self.assertNotIn("https_proxy", os.environ)
+            if os.name != "nt":
+                self.assertNotIn("https_proxy", os.environ)
             self.assertNotIn("NO_PROXY", os.environ)
             _net.model_proxy_env("direct")
             self.assertNotIn("HTTPS_PROXY", os.environ)
