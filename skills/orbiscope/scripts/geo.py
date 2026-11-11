@@ -186,7 +186,76 @@ _R = 6371008.8
 def distance(p: tuple[float, float], q: tuple[float, float]) -> float:
     la1, lo1, la2, lo2 = map(math.radians, (*p, *q))
     h = math.sin((la2 - la1) / 2) ** 2 + math.cos(la1) * math.cos(la2) * math.sin((lo2 - lo1) / 2) ** 2
-    return 2 * _R * math.asin(math.sqrt(h))
+    # Clamp h to [0.0, 1.0] to prevent ValueError: math domain error on antipodal float overshoot
+    h_clamped = min(1.0, max(0.0, h))
+    return 2 * _R * math.asin(math.sqrt(h_clamped))
+
+
+def vincenty_distance(p: tuple[float, float], q: tuple[float, float], max_iter: int = 200) -> float:
+    """High-accuracy geodesic distance in meters on WGS-84 ellipsoid using Vincenty's inverse formula.
+
+    Falls back cleanly to spherical Haversine distance for coincident or near-antipodal points
+    where iterative convergence fails.
+    """
+    a = 6378137.0
+    f = 1 / 298.257223563
+    b = (1 - f) * a
+
+    lat1, lon1 = map(math.radians, p)
+    lat2, lon2 = map(math.radians, q)
+    if lat1 == lat2 and lon1 == lon2:
+        return 0.0
+
+    U1 = math.atan((1 - f) * math.tan(lat1))
+    U2 = math.atan((1 - f) * math.tan(lat2))
+    L = lon2 - lon1
+    lam = L
+
+    sinU1, cosU1 = math.sin(U1), math.cos(U1)
+    sinU2, cosU2 = math.sin(U2), math.cos(U2)
+
+    cos_sq_alpha = 0.0
+    sin_sigma = 0.0
+    cos_sigma = 0.0
+    sigma = 0.0
+    cos_2sigma_m = 0.0
+
+    converged = False
+    for _ in range(max_iter):
+        sin_lam = math.sin(lam)
+        cos_lam = math.cos(lam)
+        t1 = cosU2 * sin_lam
+        t2 = cosU1 * sinU2 - sinU1 * cosU2 * cos_lam
+        sin_sigma = math.hypot(t1, t2)
+        if sin_sigma == 0.0:
+            return 0.0
+        cos_sigma = sinU1 * sinU2 + cosU1 * cosU2 * cos_lam
+        sigma = math.atan2(sin_sigma, cos_sigma)
+        sin_alpha = (cosU1 * cosU2 * sin_lam) / sin_sigma
+        cos_sq_alpha = 1.0 - sin_alpha * sin_alpha
+        cos_2sigma_m = cos_sigma - 2.0 * sinU1 * sinU2 / cos_sq_alpha if cos_sq_alpha != 0.0 else 0.0
+        C = (f / 16.0) * cos_sq_alpha * (4.0 + f * (4.0 - 3.0 * cos_sq_alpha))
+        lam_prev = lam
+        lam = L + (1.0 - C) * f * sin_alpha * (
+            sigma + C * sin_sigma * (cos_2sigma_m + C * cos_sigma * (-1.0 + 2.0 * cos_2sigma_m * cos_2sigma_m))
+        )
+        if abs(lam - lam_prev) <= 1e-12:
+            converged = True
+            break
+
+    if not converged:
+        return distance(p, q)
+
+    u_sq = cos_sq_alpha * (a * a - b * b) / (b * b)
+    A = 1.0 + (u_sq / 16384.0) * (4096.0 + u_sq * (-768.0 + u_sq * (320.0 - 175.0 * u_sq)))
+    B = (u_sq / 1024.0) * (256.0 + u_sq * (-128.0 + u_sq * (74.0 - 47.0 * u_sq)))
+    delta_sigma = B * sin_sigma * (
+        cos_2sigma_m + (B / 4.0) * (
+            cos_sigma * (-1.0 + 2.0 * cos_2sigma_m * cos_2sigma_m)
+            - (B / 6.0) * cos_2sigma_m * (-3.0 + 4.0 * sin_sigma * sin_sigma) * (-3.0 + 4.0 * cos_2sigma_m * cos_2sigma_m)
+        )
+    )
+    return b * A * (sigma - delta_sigma)
 
 
 def bearing(p: tuple[float, float], q: tuple[float, float]) -> float:
