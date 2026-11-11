@@ -127,18 +127,34 @@ def _run(cmd: list[str]) -> subprocess.CompletedProcess:
                           env={**os.environ, "PYTHONUTF8": "1"})
 
 
+def _lon_span(w: float, e: float) -> float:
+    w_norm = (w + 180.0) % 360.0 - 180.0
+    e_norm = (e + 180.0) % 360.0 - 180.0
+    if e_norm >= w_norm:
+        return e_norm - w_norm
+    return (180.0 - w_norm) + (e_norm + 180.0)
+
+
 def _bbox_km2(bb: list[float]) -> float:
     s, w, n, e = bb
-    return abs(n - s) * 110.574 * abs(e - w) * 111.320 * math.cos(math.radians((s + n) / 2))
+    s_c = max(-90.0, min(90.0, min(s, n)))
+    n_c = max(-90.0, min(90.0, max(s, n)))
+    lon_deg = _lon_span(w, e)
+    return (n_c - s_c) * 110.574 * lon_deg * 111.320 * math.cos(math.radians((s_c + n_c) / 2))
 
 
 def _pages(bb: list[float], zoom: int, cell: int, cols: int) -> int:
     s, w, n, e = bb
-    mpp = 156543.03392 * math.cos(math.radians((s + n) / 2)) / 2 ** zoom
+    s_c = max(-90.0, min(90.0, min(s, n)))
+    n_c = max(-90.0, min(90.0, max(s, n)))
+    mid_lat = (s_c + n_c) / 2
+    mpp = 156543.03392 * math.cos(math.radians(mid_lat)) / 2 ** zoom
     step = cell * mpp * 0.9
-    r = max(1, math.ceil((n - s) * 110574 / step))
-    c = max(1, math.ceil((e - w) * 111320 * math.cos(math.radians((s + n) / 2)) / step))
+    r = max(1, math.ceil((n_c - s_c) * 110574 / step))
+    lon_deg = _lon_span(w, e)
+    c = max(1, math.ceil(lon_deg * 111320 * math.cos(math.radians(mid_lat)) / step))
     return math.ceil(r * c / (cols * cols))
+
 
 
 def _inherited(b: dict, name: str, own_clues: set[str]) -> list[dict]:
@@ -736,8 +752,24 @@ def _inside(c: dict, lat: float, lon: float, pad_m: float = 30) -> bool | None:
     bb = c.get("bbox")
     if not bb:
         return None
-    dy, dx = pad_m / 110574, pad_m / (111320 * math.cos(math.radians(lat)))
-    return bb[0] - dy <= lat <= bb[2] + dy and bb[1] - dx <= lon <= bb[3] + dx
+    s, w, n, e = bb
+    s_c = max(-90.0, min(90.0, min(s, n)))
+    n_c = max(-90.0, min(90.0, max(s, n)))
+    dy = pad_m / 110574.0
+    dx = pad_m / (111320.0 * max(0.01, math.cos(math.radians(lat))))
+
+    if not (s_c - dy <= lat <= n_c + dy):
+        return False
+
+    w_norm = (w + 180.0) % 360.0 - 180.0
+    e_norm = (e + 180.0) % 360.0 - 180.0
+    lon_norm = (lon + 180.0) % 360.0 - 180.0
+
+    if e_norm >= w_norm:
+        return (w_norm - dx) <= lon_norm <= (e_norm + dx)
+    else:
+        return lon_norm >= (w_norm - dx) or lon_norm <= (e_norm + dx)
+
 
 
 def _skipped_level(b: dict, name: str) -> tuple[str, list[str], str | None] | None:

@@ -207,7 +207,77 @@ def dest(p: tuple[float, float], brg: float, dist_m: float) -> tuple[float, floa
     return math.degrees(la2), lon_deg
 
 
+def normalize_lon(lon: float) -> float:
+    """Normalize longitude to [-180, 180)."""
+    return (lon + 180.0) % 360.0 - 180.0
+
+
+def clamp_lat(lat: float) -> float:
+    """Clamp latitude to [-90.0, 90.0]."""
+    return max(-90.0, min(90.0, lat))
+
+
+def bbox_lon_span(w: float, e: float) -> float:
+    """Compute the true longitudinal span in degrees, handling anti-meridian crossings.
+
+    When east < west (e.g., w=179, e=-179), the box crosses the 180th meridian,
+    spanning (180 - w) + (e - (-180)) = 2 degrees instead of 358 degrees.
+    """
+    w_norm = normalize_lon(w)
+    e_norm = normalize_lon(e)
+    if e_norm >= w_norm:
+        return e_norm - w_norm
+    return (180.0 - w_norm) + (e_norm + 180.0)
+
+
+def bbox_km2(bbox: tuple[float, float, float, float] | list[float]) -> float:
+    """Area of bounding box [south, west, north, east] in square kilometers.
+
+    Handles anti-meridian crossings and latitude boundary clamping.
+    """
+    s, w, n, e = bbox
+    s_clamped = clamp_lat(min(s, n))
+    n_clamped = clamp_lat(max(s, n))
+    lat_span = n_clamped - s_clamped
+    lon_span = bbox_lon_span(w, e)
+    mid_lat = (s_clamped + n_clamped) / 2.0
+    return lat_span * 110.574 * lon_span * 111.320 * math.cos(math.radians(mid_lat))
+
+
+def point_in_bbox(
+    point: tuple[float, float] | list[float],
+    bbox: tuple[float, float, float, float] | list[float],
+    pad_m: float = 0.0,
+) -> bool:
+    """Check if point (lat, lon) is inside bounding box [south, west, north, east].
+
+    Correctly resolves boxes crossing the anti-meridian (east < west) and applies pad_m in meters.
+    """
+    lat = float(point[0])
+    lon = normalize_lon(float(point[1]))
+    s, w, n, e = bbox
+    s_c = clamp_lat(min(s, n))
+    n_c = clamp_lat(max(s, n))
+
+    dy = pad_m / 110574.0 if pad_m > 0 else 0.0
+    cos_lat = math.cos(math.radians(clamp_lat(lat)))
+    dx = pad_m / (111320.0 * max(0.01, cos_lat)) if pad_m > 0 else 0.0
+
+    if not (s_c - dy <= lat <= n_c + dy):
+        return False
+
+    w_n = normalize_lon(w)
+    e_n = normalize_lon(e)
+
+    if e_n >= w_n:
+        return (w_n - dx) <= lon <= (e_n + dx)
+    else:
+        # Crosses anti-meridian: inside if lon is west of meridian or east of antimeridian
+        return lon >= (w_n - dx) or lon <= (e_n + dx)
+
+
 # ---------------------------------------------------------------- Web Mercator tiles
+
 
 def ll2px(zoom: int, lat: float, lon: float) -> tuple[float, float]:
     """lat/lon → global pixel coordinates at this zoom level (256 tiles)."""
