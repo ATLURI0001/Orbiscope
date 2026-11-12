@@ -69,3 +69,15 @@ def test_board_inside_and_pages_antimeridian():
     assert pages > 0
     assert pages < 100_000  # previously would calculate negative or absurd numbers
 
+
+def test_full_globe_lon_span_and_padded_antimeridian_bbox():
+    # Full [-180, 180] longitude span must be 360 degrees, not 0
+    assert math.isclose(geo.bbox_lon_span(-180.0, 180.0), 360.0)
+    assert math.isclose(geo.bbox_lon_span(10.0, 10.0), 0.0)
+    assert geo.bbox_km2([-1.0, -180.0, 1.0, 180.0]) > 1_000_000.0
+
+    # Padding crossing -180 should match points on the +180 side within pad_m
+    bbox_near_dateline = [-1.0, -179.99, 1.0, -179.0]
+    assert geo.point_in_bbox([0.0, 179.98], bbox_near_dateline, pad_m=5000.0) is True
+    assert geo.point_in_bbox([0.0, 170.0], bbox_near_dateline, pad_m=5000.0) is False
+
