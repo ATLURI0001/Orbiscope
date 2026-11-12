@@ -292,11 +292,15 @@ def bbox_lon_span(w: float, e: float) -> float:
     When east < west (e.g., w=179, e=-179), the box crosses the 180th meridian,
     spanning (180 - w) + (e - (-180)) = 2 degrees instead of 358 degrees.
     """
+    if e != w and (e - w) >= 360.0:
+        return 360.0
     w_norm = normalize_lon(w)
     e_norm = normalize_lon(e)
-    if e_norm >= w_norm:
+    if e_norm > w_norm:
         return e_norm - w_norm
-    return (180.0 - w_norm) + (e_norm + 180.0)
+    if e_norm < w_norm:
+        return (180.0 - w_norm) + (e_norm + 180.0)
+    return 0.0
 
 
 def bbox_km2(bbox: tuple[float, float, float, float] | list[float]) -> float:
@@ -335,14 +339,18 @@ def point_in_bbox(
     if not (s_c - dy <= lat <= n_c + dy):
         return False
 
+    span = bbox_lon_span(w, e)
+    padded_span = span + 2.0 * dx
+    if padded_span >= 360.0:
+        return True
+
     w_n = normalize_lon(w)
     e_n = normalize_lon(e)
-
-    if e_n >= w_n:
+    if e_n >= w_n and (w_n - dx) >= -180.0 and (e_n + dx) < 180.0:
         return (w_n - dx) <= lon <= (e_n + dx)
-    else:
-        # Crosses anti-meridian: inside if lon is west of meridian or east of antimeridian
-        return lon >= (w_n - dx) or lon <= (e_n + dx)
+
+    w_pad = normalize_lon(w_n - dx)
+    return ((lon - w_pad) % 360.0) <= (padded_span + 1e-12)
 
 
 # ---------------------------------------------------------------- Web Mercator tiles
