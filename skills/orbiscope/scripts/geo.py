@@ -379,23 +379,37 @@ def meters_per_px(zoom: int, lat: float) -> float:
 
 def focal_px(image_width_px: float, hfov_deg: float) -> float:
     """Focal length in pixels under the pinhole model."""
+    if not (math.isfinite(image_width_px) and image_width_px > 0):
+        raise ValueError(f"image_width_px must be positive and finite, got {image_width_px}")
+    if not (math.isfinite(hfov_deg) and 0 < hfov_deg < 180):
+        raise ValueError(f"hfov_deg must be strictly between 0 and 180 degrees, got {hfov_deg}")
     return (image_width_px / 2) / math.tan(math.radians(hfov_deg) / 2)
 
 
 def range_from_size(real_size_m: float, size_px: float, image_width_px: float, hfov_deg: float) -> float:
     """Known real width of an object and its pixel width in the frame → depth distance (meters)."""
+    if not (math.isfinite(real_size_m) and real_size_m > 0):
+        raise ValueError(f"real_size_m must be positive and finite, got {real_size_m}")
+    if not (math.isfinite(size_px) and size_px > 0):
+        raise ValueError(f"size_px must be positive and finite, got {size_px}")
     return real_size_m * focal_px(image_width_px, hfov_deg) / size_px
 
 
 def angle_from_center(px: float, center_px: float, image_width_px: float, hfov_deg: float) -> float:
     """Horizontal angle of a point in the frame relative to the optical axis (degrees, right positive). Same for vertical: pass vertical pixels."""
+    if not (math.isfinite(px) and math.isfinite(center_px)):
+        raise ValueError(f"px and center_px must be finite numbers, got {px=}, {center_px=}")
     return math.degrees(math.atan((px - center_px) / focal_px(image_width_px, hfov_deg)))
 
 
 # Common phone main-camera field of view (35mm equivalent focal length → long-side/short-side field of view for a 4:3 frame)
 def fov_from_equiv_focal(focal_mm: float, aspect: tuple[int, int] = (4, 3)) -> tuple[float, float]:
-    diag = 43.2666
+    if not (math.isfinite(focal_mm) and focal_mm > 0):
+        raise ValueError(f"focal_mm must be positive and finite, got {focal_mm}")
     w, h = aspect
+    if not (math.isfinite(w) and w > 0 and math.isfinite(h) and h > 0):
+        raise ValueError(f"aspect dimensions must be positive, got {aspect}")
+    diag = 43.2666
     k = diag / math.hypot(w, h)
     long_side, short_side = w * k, h * k
     return (math.degrees(2 * math.atan(long_side / 2 / focal_mm)),
