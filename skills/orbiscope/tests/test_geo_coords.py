@@ -55,6 +55,39 @@ class GeoCoordsTests(unittest.TestCase):
         self.assertAlmostEqual(b, 90.0, places=1)
         self.assertGreater(d, 100000.0)
 
+    def test_dest_validation_and_negative_distance(self):
+        with self.assertRaises(ValueError):
+            geo.dest((0.0, 0.0), 90.0, -100.0)
+        with self.assertRaises(ValueError):
+            geo.dest((float("nan"), 0.0), 90.0, 100.0)
+        with self.assertRaises(ValueError):
+            geo.dest((0.0, 0.0), float("inf"), 100.0)
+
+    def test_midpoint_calculation_and_antimeridian(self):
+        # Basic equator midpoint
+        p1 = (0.0, 0.0)
+        p2 = (0.0, 10.0)
+        mid = geo.midpoint(p1, p2)
+        self.assertAlmostEqual(mid[0], 0.0)
+        self.assertAlmostEqual(mid[1], 5.0)
+
+        # Equal distance from midpoint to endpoints
+        d1 = geo.distance(p1, mid)
+        d2 = geo.distance(mid, p2)
+        self.assertAlmostEqual(d1, d2, places=1)
+
+        # Antimeridian midpoint across 180 degrees
+        p_west = (0.0, 179.0)
+        p_east = (0.0, -179.0)
+        mid_anti = geo.midpoint(p_west, p_east)
+        self.assertAlmostEqual(mid_anti[0], 0.0)
+        self.assertAlmostEqual(abs(mid_anti[1]), 180.0)
+
+        # Error on NaN
+        with self.assertRaises(ValueError):
+            geo.midpoint((float("nan"), 0.0), (0.0, 0.0))
+
+
 
 if __name__ == "__main__":
     unittest.main()

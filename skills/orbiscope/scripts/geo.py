@@ -260,6 +260,8 @@ def vincenty_distance(p: tuple[float, float], q: tuple[float, float], max_iter: 
 
 def bearing(p: tuple[float, float], q: tuple[float, float]) -> float:
     """Compass bearing from p looking at q, 0=north, clockwise."""
+    if any(not math.isfinite(x) for x in (*p, *q)):
+        raise ValueError("Coordinates must be finite numbers")
     la1, lo1, la2, lo2 = map(math.radians, (*p, *q))
     y = math.sin(lo2 - lo1) * math.cos(la2)
     x = math.cos(la1) * math.sin(la2) - math.sin(la1) * math.cos(la2) * math.cos(lo2 - lo1)
@@ -267,13 +269,43 @@ def bearing(p: tuple[float, float], q: tuple[float, float]) -> float:
 
 
 def dest(p: tuple[float, float], brg: float, dist_m: float) -> tuple[float, float]:
+    """Calculate destination point given start point, bearing, and distance."""
+    if any(not math.isfinite(x) for x in (*p, brg, dist_m)):
+        raise ValueError("Inputs to dest must be finite numbers")
+    if dist_m < 0:
+        raise ValueError("Distance must be non-negative")
     la1, lo1 = map(math.radians, p)
     b = math.radians(brg)
     d = dist_m / _R
-    la2 = math.asin(math.sin(la1) * math.cos(d) + math.cos(la1) * math.sin(d) * math.cos(b))
+    sin_term = max(-1.0, min(1.0, math.sin(la1) * math.cos(d) + math.cos(la1) * math.sin(d) * math.cos(b)))
+    la2 = math.asin(sin_term)
     lo2 = lo1 + math.atan2(math.sin(b) * math.sin(d) * math.cos(la1), math.cos(d) - math.sin(la1) * math.sin(la2))
     lon_deg = (math.degrees(lo2) + 540) % 360 - 180
-    return math.degrees(la2), lon_deg
+    return clamp_lat(math.degrees(la2)), normalize_lon(lon_deg)
+
+
+def midpoint(p: tuple[float, float], q: tuple[float, float]) -> tuple[float, float]:
+    """Calculate the geodesic midpoint between two points on the sphere.
+
+    Args:
+        p: (lat, lon) of first point in degrees
+        q: (lat, lon) of second point in degrees
+
+    Returns:
+        (lat, lon) of midpoint in degrees, with lon in [-180, 180)
+    """
+    if any(not math.isfinite(x) for x in (*p, *q)):
+        raise ValueError("Coordinates must be finite numbers")
+    la1, lo1, la2, lo2 = map(math.radians, (*p, *q))
+    d_lon = lo2 - lo1
+    bx = math.cos(la2) * math.cos(d_lon)
+    by = math.cos(la2) * math.sin(d_lon)
+    lat3 = math.atan2(
+        math.sin(la1) + math.sin(la2),
+        math.sqrt((math.cos(la1) + bx) ** 2 + by ** 2),
+    )
+    lon3 = lo1 + math.atan2(by, math.cos(la1) + bx)
+    return clamp_lat(math.degrees(lat3)), normalize_lon(math.degrees(lon3))
 
 
 def normalize_lon(lon: float) -> float:
