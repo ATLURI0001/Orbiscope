@@ -308,6 +308,49 @@ def midpoint(p: tuple[float, float], q: tuple[float, float]) -> tuple[float, flo
     return clamp_lat(math.degrees(lat3)), normalize_lon(math.degrees(lon3))
 
 
+def cross_track_distance(p: tuple[float, float], start: tuple[float, float], end: tuple[float, float]) -> float:
+    """Calculate signed cross-track distance in meters from point p to great-circle track between start and end.
+
+    Positive values indicate p is to the right of the track, negative to the left.
+    """
+    if any(not math.isfinite(x) for x in (*p, *start, *end)):
+        raise ValueError("Coordinates must be finite numbers")
+    if start == end:
+        return distance(p, start)
+    d13 = distance(start, p) / _R
+    if d13 == 0.0:
+        return 0.0
+    brg13 = math.radians(bearing(start, p))
+    brg12 = math.radians(bearing(start, end))
+    sin_term = math.sin(d13) * math.sin(brg13 - brg12)
+    clamped_sin = max(-1.0, min(1.0, sin_term))
+    return math.asin(clamped_sin) * _R
+
+
+def along_track_distance(p: tuple[float, float], start: tuple[float, float], end: tuple[float, float]) -> float:
+    """Calculate along-track distance in meters from start towards end for point p."""
+    if any(not math.isfinite(x) for x in (*p, *start, *end)):
+        raise ValueError("Coordinates must be finite numbers")
+    if start == end:
+        return 0.0
+    d13 = distance(start, p) / _R
+    if d13 == 0.0:
+        return 0.0
+    xt = cross_track_distance(p, start, end) / _R
+    cos_d13 = math.cos(d13)
+    cos_xt = math.cos(xt)
+    if cos_xt == 0.0:
+        return 0.0
+    ratio = max(-1.0, min(1.0, cos_d13 / cos_xt))
+    at = math.acos(ratio) * _R
+    brg13 = math.radians(bearing(start, p))
+    brg12 = math.radians(bearing(start, end))
+    d_brg = (brg13 - brg12 + math.pi) % (2 * math.pi) - math.pi
+    if abs(d_brg) > math.pi / 2:
+        at = -at
+    return at
+
+
 def normalize_lon(lon: float) -> float:
     """Normalize longitude to [-180, 180)."""
     return (lon + 180.0) % 360.0 - 180.0
