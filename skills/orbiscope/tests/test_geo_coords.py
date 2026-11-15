@@ -87,6 +87,36 @@ class GeoCoordsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             geo.midpoint((float("nan"), 0.0), (0.0, 0.0))
 
+    def test_cross_track_and_along_track_distance(self):
+        # Equatorial path going due east from (0,0) to (0,10)
+        start = (0.0, 0.0)
+        end = (0.0, 10.0)
+
+        # Point directly on path at (0, 5)
+        on_path = (0.0, 5.0)
+        xt_zero = geo.cross_track_distance(on_path, start, end)
+        at_mid = geo.along_track_distance(on_path, start, end)
+        self.assertAlmostEqual(xt_zero, 0.0, places=1)
+        self.assertAlmostEqual(at_mid, geo.distance(start, on_path), places=1)
+
+        # Point 1 degree north (to the left of track, so signed negative)
+        north_pt = (1.0, 5.0)
+        xt_north = geo.cross_track_distance(north_pt, start, end)
+        self.assertLess(xt_north, 0.0)
+        self.assertAlmostEqual(abs(xt_north), geo.distance((0.0, 5.0), north_pt), delta=500.0)
+
+        # Point behind start: along-track is negative
+        behind_pt = (0.0, -2.0)
+        at_behind = geo.along_track_distance(behind_pt, start, end)
+        self.assertLess(at_behind, 0.0)
+
+        # Coincident start/end fallback
+        self.assertEqual(geo.along_track_distance(on_path, start, start), 0.0)
+        self.assertAlmostEqual(geo.cross_track_distance(on_path, start, start), geo.distance(on_path, start), places=1)
+
+        # Non-finite inputs raise ValueError
+        with self.assertRaises(ValueError):
+            geo.cross_track_distance((float("nan"), 0.0), start, end)
 
 
 if __name__ == "__main__":
