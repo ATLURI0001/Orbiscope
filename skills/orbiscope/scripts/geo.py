@@ -308,6 +308,66 @@ def midpoint(p: tuple[float, float], q: tuple[float, float]) -> tuple[float, flo
     return clamp_lat(math.degrees(lat3)), normalize_lon(math.degrees(lon3))
 
 
+def bearing_difference(b1: float, b2: float) -> float:
+    """Calculate minimal signed difference between two compass bearings in degrees.
+
+    Returns:
+        Difference in degrees within [-180.0, 180.0]. Positive means turning clockwise
+        from b1 to b2; negative means turning counter-clockwise.
+    """
+    if not math.isfinite(b1) or not math.isfinite(b2):
+        raise ValueError("Bearings must be finite numbers")
+    diff = ((b2 - b1 + 180.0) % 360.0) - 180.0
+    return 180.0 if diff == -180.0 else diff
+
+
+def interpolate_great_circle(
+    p: tuple[float, float],
+    q: tuple[float, float],
+    fraction: float,
+) -> tuple[float, float]:
+    """Calculate intermediate coordinate along great-circle path from p to q at given fraction.
+
+    Args:
+        p: (lat, lon) start point in degrees
+        q: (lat, lon) end point in degrees
+        fraction: Path progression ratio in [0.0, 1.0]
+
+    Returns:
+        (lat, lon) of interpolated point in degrees, with lon in [-180, 180)
+    """
+    if any(not math.isfinite(x) for x in (*p, *q, fraction)):
+        raise ValueError("Coordinates and fraction must be finite numbers")
+    if not (0.0 <= fraction <= 1.0):
+        raise ValueError(f"fraction must be in range [0.0, 1.0], got {fraction}")
+
+    if fraction == 0.0:
+        return clamp_lat(p[0]), normalize_lon(p[1])
+    if fraction == 1.0:
+        return clamp_lat(q[0]), normalize_lon(q[1])
+
+    d_m = distance(p, q)
+    if d_m < 1e-6:
+        return clamp_lat(p[0]), normalize_lon(p[1])
+
+    d = d_m / _R
+    sin_d = math.sin(d)
+    if abs(sin_d) < 1e-12:
+        return midpoint(p, q) if abs(fraction - 0.5) < 1e-6 else (clamp_lat(p[0]), normalize_lon(p[1]))
+
+    la1, lo1, la2, lo2 = map(math.radians, (*p, *q))
+    a_coeff = math.sin((1.0 - fraction) * d) / sin_d
+    b_coeff = math.sin(fraction * d) / sin_d
+
+    x = a_coeff * math.cos(la1) * math.cos(lo1) + b_coeff * math.cos(la2) * math.cos(lo2)
+    y = a_coeff * math.cos(la1) * math.sin(lo1) + b_coeff * math.cos(la2) * math.sin(lo2)
+    z = a_coeff * math.sin(la1) + b_coeff * math.sin(la2)
+
+    lat_interp = math.atan2(z, math.sqrt(x * x + y * y))
+    lon_interp = math.atan2(y, x)
+    return clamp_lat(math.degrees(lat_interp)), normalize_lon(math.degrees(lon_interp))
+
+
 def cross_track_distance(p: tuple[float, float], start: tuple[float, float], end: tuple[float, float]) -> float:
     """Calculate signed cross-track distance in meters from point p to great-circle track between start and end.
 
