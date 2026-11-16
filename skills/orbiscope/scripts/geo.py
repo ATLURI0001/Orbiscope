@@ -411,6 +411,66 @@ def along_track_distance(p: tuple[float, float], start: tuple[float, float], end
     return at
 
 
+def path_length(points: list[tuple[float, float]]) -> float:
+    """Calculate cumulative great-circle track distance in meters along an ordered sequence of coordinates.
+
+    Args:
+        points: Ordered list of (lat, lon) tuples in degrees.
+
+    Returns:
+        Total distance in meters, or 0.0 if fewer than 2 points.
+    """
+    if not isinstance(points, (list, tuple)) or len(points) < 2:
+        return 0.0
+    for pt in points:
+        if not isinstance(pt, (list, tuple)) or len(pt) < 2 or any(not math.isfinite(x) for x in pt[:2]):
+            raise ValueError("All points in path must be finite (lat, lon) coordinates")
+
+    total = 0.0
+    for i in range(len(points) - 1):
+        total += distance(points[i], points[i + 1])
+    return total
+
+
+def bounding_box_for_radius(
+    center: tuple[float, float], radius_m: float
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """Calculate geographic bounding box enclosing a circle of radius_m around center.
+
+    Args:
+        center: (lat, lon) in degrees.
+        radius_m: Radius in meters (>= 0).
+
+    Returns:
+        ((min_lat, min_lon), (max_lat, max_lon)) tuple of bounds in degrees.
+    """
+    if any(not math.isfinite(x) for x in (*center, radius_m)):
+        raise ValueError("Inputs to bounding_box_for_radius must be finite numbers")
+    if radius_m < 0:
+        raise ValueError("Radius must be non-negative")
+
+    lat, lon = center
+    lat_rad = math.radians(lat)
+    d_lat = math.degrees(radius_m / _R)
+    min_lat = max(-90.0, lat - d_lat)
+    max_lat = min(90.0, lat + d_lat)
+
+    # Longitude delta depends on latitude
+    cos_lat = math.cos(lat_rad)
+    if abs(cos_lat) > 1e-6:
+        d_lon = math.degrees(radius_m / (_R * cos_lat))
+        if d_lon >= 180.0:
+            min_lon, max_lon = -180.0, 180.0
+        else:
+            min_lon = normalize_lon(lon - d_lon)
+            max_lon = normalize_lon(lon + d_lon)
+    else:
+        # Near poles, spans full longitude
+        min_lon, max_lon = -180.0, 180.0
+
+    return ((min_lat, min_lon), (max_lat, max_lon))
+
+
 def normalize_lon(lon: float) -> float:
     """Normalize longitude to [-180, 180)."""
     return (lon + 180.0) % 360.0 - 180.0
