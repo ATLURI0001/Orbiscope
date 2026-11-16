@@ -118,6 +118,59 @@ class GeoCoordsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             geo.cross_track_distance((float("nan"), 0.0), start, end)
 
+    def test_bearing_difference(self):
+        # Clockwise turn
+        self.assertAlmostEqual(geo.bearing_difference(10.0, 50.0), 40.0)
+        # Counter-clockwise turn
+        self.assertAlmostEqual(geo.bearing_difference(50.0, 10.0), -40.0)
+        # Wrap across north (350 to 20 is +30 clockwise)
+        self.assertAlmostEqual(geo.bearing_difference(350.0, 20.0), 30.0)
+        # Wrap across north (20 to 350 is -30 counter-clockwise)
+        self.assertAlmostEqual(geo.bearing_difference(20.0, 350.0), -30.0)
+        # Direct opposite (180 deg)
+        self.assertAlmostEqual(geo.bearing_difference(0.0, 180.0), 180.0)
+        # Full turn / identical
+        self.assertAlmostEqual(geo.bearing_difference(45.0, 405.0), 0.0)
+
+        # Non-finite raises ValueError
+        with self.assertRaises(ValueError):
+            geo.bearing_difference(float("nan"), 10.0)
+        with self.assertRaises(ValueError):
+            geo.bearing_difference(10.0, float("inf"))
+
+    def test_interpolate_great_circle(self):
+        p1 = (0.0, 0.0)
+        p2 = (0.0, 10.0)
+
+        # Boundary endpoints fraction=0 and fraction=1
+        self.assertEqual(geo.interpolate_great_circle(p1, p2, 0.0), p1)
+        self.assertEqual(geo.interpolate_great_circle(p1, p2, 1.0), p2)
+
+        # Midpoint consistency (fraction=0.5 matches geo.midpoint)
+        mid_interp = geo.interpolate_great_circle(p1, p2, 0.5)
+        mid_actual = geo.midpoint(p1, p2)
+        self.assertAlmostEqual(mid_interp[0], mid_actual[0], places=5)
+        self.assertAlmostEqual(mid_interp[1], mid_actual[1], places=5)
+
+        # Fractional quarter distance check
+        quarter = geo.interpolate_great_circle(p1, p2, 0.25)
+        d_p1_quarter = geo.distance(p1, quarter)
+        d_quarter_p2 = geo.distance(quarter, p2)
+        self.assertAlmostEqual(d_p1_quarter * 3.0, d_quarter_p2, delta=20.0)
+
+        # Coincident points
+        self.assertEqual(geo.interpolate_great_circle(p1, p1, 0.4), p1)
+
+        # Out of bounds fraction
+        with self.assertRaises(ValueError):
+            geo.interpolate_great_circle(p1, p2, -0.1)
+        with self.assertRaises(ValueError):
+            geo.interpolate_great_circle(p1, p2, 1.1)
+
+        # Non-finite inputs
+        with self.assertRaises(ValueError):
+            geo.interpolate_great_circle((float("nan"), 0.0), p2, 0.5)
+
 
 if __name__ == "__main__":
     unittest.main()
