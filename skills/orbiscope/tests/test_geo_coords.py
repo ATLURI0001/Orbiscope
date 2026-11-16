@@ -171,6 +171,33 @@ class GeoCoordsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             geo.interpolate_great_circle((float("nan"), 0.0), p2, 0.5)
 
+    def test_path_length(self):
+        # Empty or single point
+        self.assertEqual(geo.path_length([]), 0.0)
+        self.assertEqual(geo.path_length([(0.0, 0.0)]), 0.0)
+
+        # Multi-segment path
+        pts = [(0.0, 0.0), (0.0, 1.0), (0.0, 2.0)]
+        expected = geo.distance((0.0, 0.0), (0.0, 1.0)) + geo.distance((0.0, 1.0), (0.0, 2.0))
+        self.assertAlmostEqual(geo.path_length(pts), expected, delta=1.0)
+
+        # Invalid points
+        with self.assertRaises(ValueError):
+            geo.path_length([(0.0, 0.0), (float("nan"), 1.0)])
+
+    def test_bounding_box_for_radius(self):
+        center = (0.0, 0.0)
+        radius = 111319.5  # approx 1 degree of latitude in meters
+        (min_lat, min_lon), (max_lat, max_lon) = geo.bounding_box_for_radius(center, radius)
+        self.assertAlmostEqual(min_lat, -1.0, delta=0.05)
+        self.assertAlmostEqual(max_lat, 1.0, delta=0.05)
+        self.assertAlmostEqual(min_lon, -1.0, delta=0.05)
+        self.assertAlmostEqual(max_lon, 1.0, delta=0.05)
+
+        # Negative radius raises ValueError
+        with self.assertRaises(ValueError):
+            geo.bounding_box_for_radius(center, -50.0)
+
 
 if __name__ == "__main__":
     unittest.main()
