@@ -548,6 +548,187 @@ def point_in_bbox(
     return ((lon - w_pad) % 360.0) <= (padded_span + 1e-12)
 
 
+def sanitize_coordinate_pairs(
+    raw_input: list | str | tuple | None,
+) -> list[tuple[float, float]]:
+    """Parse, sanitize, and validate geographic coordinate pairs into [(lat, lon), ...].
+
+    Accepts:
+      - Semicolon- or newline-separated string: "37.77,-122.41; 34.05,-118.24"
+      - List/tuple of (lat, lon) pairs or [lat, lon]
+      - List of dicts with keys ('lat'|'latitude') and ('lon'|'lng'|'longitude')
+
+    Enforces:
+      - Finite float conversion (rejects NaN, Inf)
+      - Clamps latitude to [-90.0, 90.0]
+      - Normalizes longitude to [-180.0, 180.0)
+    """
+    if raw_input is None:
+        return []
+
+    items = []
+    if isinstance(raw_input, str):
+        parts = re.split(r"[;\n|]", raw_input.strip())
+        for p in parts:
+            p = p.strip()
+            if not p:
+                continue
+            if "," in p:
+                sub = p.split(",", 1)
+                items.append((sub[0].strip(), sub[1].strip()))
+    elif isinstance(raw_input, (list, tuple)):
+        for elem in raw_input:
+            if isinstance(elem, dict):
+                lat = elem.get("lat", elem.get("latitude"))
+                lon = elem.get("lon", elem.get("lng", elem.get("longitude")))
+                if lat is not None and lon is not None:
+                    items.append((lat, lon))
+            elif isinstance(elem, (list, tuple)) and len(elem) >= 2:
+                items.append((elem[0], elem[1]))
+
+    sanitized: list[tuple[float, float]] = []
+    for raw_lat, raw_lon in items:
+        try:
+            lat = float(raw_lat)
+            lon = float(raw_lon)
+            if not (math.isfinite(lat) and math.isfinite(lon)):
+                continue
+            lat = clamp_lat(lat)
+            lon = normalize_lon(lon)
+            sanitized.append((round(lat, 7), round(lon, 7)))
+        except (ValueError, TypeError):
+            continue
+
+    return sanitized
+
+
+def polygon_area_m2(vertices: list[tuple[float, float]]) -> float:
+    """Compute the spherical surface area of a polygon on Earth in square meters.
+
+    Uses the spherical surveyor formula. Vertices must be (lat, lon) pairs in degrees.
+    Duplicate closing vertex (where vertices[-1] == vertices[0]) is automatically handled.
+    Returns 0.0 if fewer than 3 unique vertices are provided.
+    """
+    if not vertices or len(vertices) < 3:
+        return 0.0
+
+    pts = list(vertices)
+    if pts[0] == pts[-1] and len(pts) > 3:
+        pts = pts[:-1]
+
+    n = len(pts)
+    if n < 3:
+        return 0.0
+
+    total = 0.0
+    for i in range(n):
+        prev_idx = (i - 1) % n
+        next_idx = (i + 1) % n
+
+        lat_rad = math.radians(pts[i][0])
+        lon_next_rad = math.radians(pts[next_idx][1])
+        lon_prev_rad = math.radians(pts[prev_idx][1])
+
+        d_lon = lon_next_rad - lon_prev_rad
+        while d_lon > math.pi:
+            d_lon -= 2.0 * math.pi
+        while d_lon < -math.pi:
+            d_lon += 2.0 * math.pi
+
+        total += d_lon * math.sin(lat_rad)
+
+    area = abs(total) * (_R * _R) / 2.0
+    return round(area, 2)
+
+
+def point_in_polygon(
+    point: tuple[float, float],
+    polygon: list[tuple[float, float]],
+) -> bool:
+    """Test whether a point (lat, lon) lies inside a geographic polygon using ray-casting.
+
+    Handles anti-meridian unwrapping relative to polygon vertex span.
+    """
+    if not polygon or len(polygon) < 3:
+        return False
+
+    lat = float(point[0])
+    lon = normalize_lon(float(point[1]))
+
+    pts = list(polygon)
+    if pts[0] == pts[-1] and len(pts) > 3:
+        pts = pts[:-1]
+
+    n = len(pts)
+    if n < 3:
+        return False
+
+    for v_lat, v_lon in pts:
+        if abs(lat - v_lat) < 1e-9 and abs(lon - normalize_lon(v_lon)) < 1e-9:
+            return True
+
+    unwrapped_pts = []
+    for v_lat, v_lon in pts:
+        norm_v_lon = normalize_lon(v_lon)
+        d = norm_v_lon - lon
+        while d > 180.0:
+            d -= 360.0
+        while d < -180.0:
+            d += 360.0
+        unwrapped_pts.append((v_lat, lon + d))
+
+    inside = False
+    p1_lat, p1_lon = unwrapped_pts[0]
+    for i in range(1, n + 1):
+        p2_lat, p2_lon = unwrapped_pts[i % n]
+        if (p1_lat > lat) != (p2_lat > lat):
+            x_int = (p2_lon - p1_lon) * (lat - p1_lat) / (p2_lat - p1_lat + 1e-15) + p1_lon
+            if lon < x_int:
+                inside = not inside
+        p1_lat, p1_lon = p2_lat, p2_lon
+
+    return inside
+
+
+def polygon_centroid(
+    polygon: list[tuple[float, float]],
+) -> tuple[float, float] | None:
+    """Compute the 3D unit-sphere mean centroid of a geographic polygon.
+
+    Returns (lat, lon) in degrees, or None if vertices are invalid.
+    """
+    if not polygon:
+        return None
+
+    pts = list(polygon)
+    if pts[0] == pts[-1] and len(pts) > 3:
+        pts = pts[:-1]
+
+    if not pts:
+        return None
+
+    x_sum = y_sum = z_sum = 0.0
+    for lat, lon in pts:
+        lat_rad = math.radians(clamp_lat(lat))
+        lon_rad = math.radians(normalize_lon(lon))
+        x_sum += math.cos(lat_rad) * math.cos(lon_rad)
+        y_sum += math.cos(lat_rad) * math.sin(lon_rad)
+        z_sum += math.sin(lat_rad)
+
+    n = len(pts)
+    x = x_sum / n
+    y = y_sum / n
+    z = z_sum / n
+
+    r = math.hypot(x, y)
+    if r < 1e-9 and abs(z) < 1e-9:
+        return None
+
+    centroid_lat = math.degrees(math.atan2(z, r))
+    centroid_lon = math.degrees(math.atan2(y, x))
+    return (round(centroid_lat, 7), round(centroid_lon, 7))
+
+
 # ---------------------------------------------------------------- Web Mercator tiles
 
 
