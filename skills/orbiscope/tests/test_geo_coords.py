@@ -198,6 +198,64 @@ class GeoCoordsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             geo.bounding_box_for_radius(center, -50.0)
 
+    def test_sanitize_coordinate_pairs(self):
+        # String format with semicolons
+        raw_str = "37.7749,-122.4194; 34.0522, -118.2437; invalid; 95.0, 190.0"
+        res = geo.sanitize_coordinate_pairs(raw_str)
+        self.assertEqual(len(res), 3)
+        self.assertEqual(res[0], (37.7749, -122.4194))
+        self.assertEqual(res[1], (34.0522, -118.2437))
+        # 95.0 clamped to 90.0, 190.0 normalized to -170.0
+        self.assertEqual(res[2], (90.0, -170.0))
+
+        # Dict format
+        dicts = [
+            {"lat": 10.5, "lon": 20.5},
+            {"latitude": -5.0, "longitude": 100.0},
+            {"bad": 1},
+        ]
+        res_d = geo.sanitize_coordinate_pairs(dicts)
+        self.assertEqual(len(res_d), 2)
+        self.assertEqual(res_d[0], (10.5, 20.5))
+
+        self.assertEqual(geo.sanitize_coordinate_pairs(None), [])
+        self.assertEqual(geo.sanitize_coordinate_pairs(""), [])
+
+    def test_polygon_area_and_point_in_polygon(self):
+        # 1 degree x 1 degree square at equator (approx 111km x 111km = 1.23e10 m^2)
+        poly = [
+            (0.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 1.0),
+            (1.0, 0.0),
+            (0.0, 0.0),  # closing vertex
+        ]
+        area = geo.polygon_area_m2(poly)
+        self.assertGreater(area, 1.2e10)
+        self.assertLess(area, 1.25e10)
+
+        # Degenerate cases
+        self.assertEqual(geo.polygon_area_m2([]), 0.0)
+        self.assertEqual(geo.polygon_area_m2([(0.0, 0.0), (1.0, 1.0)]), 0.0)
+
+        # Point inside
+        self.assertTrue(geo.point_in_polygon((0.5, 0.5), poly))
+        # Point outside
+        self.assertFalse(geo.point_in_polygon((1.5, 0.5), poly))
+        self.assertFalse(geo.point_in_polygon((-0.5, 0.5), poly))
+        # Boundary / vertex match
+        self.assertTrue(geo.point_in_polygon((0.0, 0.0), poly))
+
+    def test_polygon_centroid(self):
+        poly = [(0.0, 0.0), (0.0, 2.0), (2.0, 2.0), (2.0, 0.0)]
+        centroid = geo.polygon_centroid(poly)
+        self.assertIsNotNone(centroid)
+        self.assertAlmostEqual(centroid[0], 1.0, places=1)
+        self.assertAlmostEqual(centroid[1], 1.0, places=1)
+
+        self.assertIsNone(geo.polygon_centroid([]))
+
+
 
 if __name__ == "__main__":
     unittest.main()
