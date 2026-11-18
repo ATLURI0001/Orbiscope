@@ -729,6 +729,130 @@ def polygon_centroid(
     return (round(centroid_lat, 7), round(centroid_lon, 7))
 
 
+# WGS-84 reference ellipsoid constants
+_WGS84_A = 6378137.0
+_WGS84_F = 1.0 / 298.257223563
+_WGS84_E2 = _WGS84_F * (2.0 - _WGS84_F)
+
+
+def geodetic_to_ecef(
+    lat: float, lon: float, alt_m: float = 0.0
+) -> tuple[float, float, float]:
+    """Convert WGS-84 geodetic coordinates (lat_deg, lon_deg, alt_m) to ECEF (X, Y, Z) meters."""
+    if not all(math.isfinite(v) for v in (lat, lon, alt_m)):
+        raise ValueError("Geodetic coordinates must be finite numbers")
+    if not (-90.0 <= lat <= 90.0):
+        raise ValueError(f"Latitude out of range [-90, 90]: {lat}")
+    if not (-180.0 <= lon <= 180.0):
+        raise ValueError(f"Longitude out of range [-180, 180]: {lon}")
+
+    phi = math.radians(lat)
+    lam = math.radians(lon)
+    sin_phi = math.sin(phi)
+    cos_phi = math.cos(phi)
+
+    n = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * sin_phi * sin_phi)
+    x = (n + alt_m) * cos_phi * math.cos(lam)
+    y = (n + alt_m) * cos_phi * math.sin(lam)
+    z = (n * (1.0 - _WGS84_E2) + alt_m) * sin_phi
+    return (round(x, 4), round(y, 4), round(z, 4))
+
+
+def ecef_to_geodetic(
+    x: float, y: float, z: float, max_iter: int = 12
+) -> tuple[float, float, float]:
+    """Convert ECEF (X, Y, Z) meters to WGS-84 geodetic (lat_deg, lon_deg, alt_m) to sub-mm precision."""
+    if not all(math.isfinite(v) for v in (x, y, z)):
+        raise ValueError("ECEF coordinates must be finite numbers")
+
+    p = math.hypot(x, y)
+    if p < 1e-12:
+        lat = 90.0 if z >= 0.0 else -90.0
+        b = _WGS84_A * (1.0 - _WGS84_F)
+        alt = abs(z) - b
+        return (lat, 0.0, round(alt, 4))
+
+    lon = math.atan2(y, x)
+    phi = math.atan2(z, p * (1.0 - _WGS84_E2))
+
+    for _ in range(max_iter):
+        sin_phi = math.sin(phi)
+        n = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * sin_phi * sin_phi)
+        alt = p / math.cos(phi) - n
+        next_phi = math.atan2(z, p * (1.0 - _WGS84_E2 * n / (n + alt)))
+        if abs(next_phi - phi) < 1e-12:
+            phi = next_phi
+            break
+        phi = next_phi
+
+    sin_phi = math.sin(phi)
+    n = _WGS84_A / math.sqrt(1.0 - _WGS84_E2 * sin_phi * sin_phi)
+    alt = p / math.cos(phi) - n
+    return (round(math.degrees(phi), 7), round(math.degrees(lon), 7), round(alt, 3))
+
+
+def geodetic_to_enu(
+    target_lat: float,
+    target_lon: float,
+    target_alt_m: float,
+    ref_lat: float,
+    ref_lon: float,
+    ref_alt_m: float = 0.0,
+) -> tuple[float, float, float]:
+    """Transform a target WGS-84 point into exact local East-North-Up (meters) relative to reference."""
+    tx, ty, tz = geodetic_to_ecef(target_lat, target_lon, target_alt_m)
+    rx, ry, rz = geodetic_to_ecef(ref_lat, ref_lon, ref_alt_m)
+    dx, dy, dz = tx - rx, ty - ry, tz - rz
+
+    phi = math.radians(ref_lat)
+    lam = math.radians(ref_lon)
+    sin_phi, cos_phi = math.sin(phi), math.cos(phi)
+    sin_lam, cos_lam = math.sin(lam), math.cos(lam)
+
+    east = -sin_lam * dx + cos_lam * dy
+    north = -sin_phi * cos_lam * dx - sin_phi * sin_lam * dy + cos_phi * dz
+    up = cos_phi * cos_lam * dx + cos_phi * sin_lam * dy + sin_phi * dz
+    return (round(east, 3), round(north, 3), round(up, 3))
+
+
+def optical_horizon_visibility(
+    cam_alt_m: float,
+    target_alt_m: float,
+    distance_m: float,
+    refraction_k: float = 1.0 / 7.0,
+) -> dict:
+    """Compute geometric/refracted line-of-sight horizon visibility over Earth's curvature.
+
+    Uses standard atmospheric optical refraction factor k=1/7 (effective Earth radius R/(1-k)).
+    """
+    if not all(math.isfinite(v) for v in (cam_alt_m, target_alt_m, distance_m, refraction_k)):
+        raise ValueError("All visibility parameters must be finite")
+    if cam_alt_m < 0.0 or target_alt_m < 0.0 or distance_m < 0.0:
+        raise ValueError("Altitudes and distance must be non-negative")
+    if not (0.0 <= refraction_k < 1.0):
+        raise ValueError("refraction_k must be in [0.0, 1.0)")
+
+    r_eff = _R / (1.0 - refraction_k)
+    cam_horizon_m = math.sqrt(2.0 * r_eff * cam_alt_m + cam_alt_m * cam_alt_m)
+    target_horizon_m = math.sqrt(2.0 * r_eff * target_alt_m + target_alt_m * target_alt_m)
+    max_los_m = cam_horizon_m + target_horizon_m
+
+    if distance_m <= cam_horizon_m:
+        hidden_m = 0.0
+    else:
+        beyond_m = distance_m - cam_horizon_m
+        hidden_m = math.sqrt(r_eff * r_eff + beyond_m * beyond_m) - r_eff
+
+    visible_m = max(0.0, target_alt_m - hidden_m)
+    return {
+        "camera_horizon_m": round(cam_horizon_m, 2),
+        "max_los_distance_m": round(max_los_m, 2),
+        "hidden_height_m": round(hidden_m, 2),
+        "visible_height_m": round(visible_m, 2),
+        "is_visible": visible_m > 0.0,
+    }
+
+
 # ---------------------------------------------------------------- Web Mercator tiles
 
 
