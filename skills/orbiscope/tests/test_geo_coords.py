@@ -255,6 +255,49 @@ class GeoCoordsTests(unittest.TestCase):
 
         self.assertIsNone(geo.polygon_centroid([]))
 
+    def test_wgs84_ecef_and_enu_3d_transformations(self):
+        # Round-trip across mid-latitude, equator, and north pole
+        cases = [
+            (37.7749, -122.4194, 52.0),
+            (0.0, 0.0, 1000.0),
+            (90.0, 0.0, 250.0),
+            (-33.8688, 151.2093, 12.5),
+        ]
+        for lat, lon, alt in cases:
+            x, y, z = geo.geodetic_to_ecef(lat, lon, alt)
+            lat2, lon2, alt2 = geo.ecef_to_geodetic(x, y, z)
+            self.assertAlmostEqual(lat2, lat, places=6)
+            if abs(lat) < 90.0:
+                self.assertAlmostEqual(lon2, lon, places=6)
+            self.assertAlmostEqual(alt2, alt, places=1)
+
+        # Target directly 1000m above reference should map to (0, 0, +1000) in ENU
+        e, n, u = geo.geodetic_to_enu(48.8584, 2.2945, 1030.0, 48.8584, 2.2945, 30.0)
+        self.assertAlmostEqual(e, 0.0, delta=0.05)
+        self.assertAlmostEqual(n, 0.0, delta=0.05)
+        self.assertAlmostEqual(u, 1000.0, delta=0.05)
+
+        with self.assertRaises(ValueError):
+            geo.geodetic_to_ecef(95.0, 0.0, 0.0)
+
+    def test_optical_horizon_visibility_over_earth_curvature(self):
+        # Camera at 10m elevation observing a 500m skyscraper 50km away
+        vis = geo.optical_horizon_visibility(cam_alt_m=10.0, target_alt_m=500.0, distance_m=50_000.0)
+        self.assertTrue(vis["is_visible"])
+        self.assertGreater(vis["camera_horizon_m"], 11_000.0)
+        self.assertGreater(vis["hidden_height_m"], 80.0)
+        self.assertLess(vis["hidden_height_m"], 150.0)
+        self.assertAlmostEqual(vis["visible_height_m"] + vis["hidden_height_m"], 500.0, places=1)
+
+        # Target 200km away from 10m camera -> completely below horizon
+        occluded = geo.optical_horizon_visibility(cam_alt_m=10.0, target_alt_m=500.0, distance_m=200_000.0)
+        self.assertFalse(occluded["is_visible"])
+        self.assertEqual(occluded["visible_height_m"], 0.0)
+
+        with self.assertRaises(ValueError):
+            geo.optical_horizon_visibility(-1.0, 100.0, 1000.0)
+
+
 
 
 if __name__ == "__main__":
